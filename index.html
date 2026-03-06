@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<title>SR Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'"/>
+<style>
+:root{
+  --bg:#06090d;--surface:#0e1420;--surface2:#131c28;
+  --border:#182030;--border2:#1e2c40;
+  --text:#e8f0ff;--muted:#7a9ab0;
+  --green:#00e676;--gdim:#00e67614;
+  --red:#ff4060;--rdim:#ff406014;
+  --amber:#ffb700;--adim:#ffb70014;
+  --blue:#4da6ff;--bdim:#4da6ff14;
+  --purple:#a78bfa;
+  --font:'Space Grotesk',-apple-system,sans-serif;
+  --mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);height:100%;font-family:var(--font);color:var(--text);overflow:hidden}
+#root{height:100%;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:2px}::-webkit-scrollbar-thumb{background:var(--border2)}
+button{cursor:pointer;font-family:var(--font)}
+input{font-family:var(--font);background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px 8px 30px;font-size:13px;outline:none;width:100%}
+@keyframes fadeUp{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 #00e67630}50%{box-shadow:0 0 0 4px #00e67608}}
+.fu{animation:fadeUp .18s ease both}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="fb" style="display:none;position:fixed;inset:0;background:#06090d;font-family:monospace;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;z-index:9999">
+  <div style="font-size:18px;color:#00e676;font-weight:700;letter-spacing:2px">SR SCANNER</div>
+  <div style="color:#ff4060;font-size:12px">Failed to load scripts</div>
+  <div style="color:#7a9ab0;font-size:11px;max-width:300px;line-height:1.7">Brave users: tap the Lion icon → Shields Off → reload</div>
+  <button onclick="location.reload()" style="background:transparent;border:1px solid #00e676;color:#00e676;padding:9px 20px;border-radius:7px;font-size:11px;font-weight:700;letter-spacing:1px">RELOAD</button>
+</div>
+<script>setTimeout(function(){var r=document.getElementById('root'),f=document.getElementById('fb');if(r&&f&&!r.children.length)f.style.display='flex';},9000);</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="document.getElementById('fb').style.display='flex'"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" onerror="document.getElementById('fb').style.display='flex'"></script>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useCallback,useRef,useMemo}=React;
+const BASE="https://api.binance.com/api/v3";
+const FBASE="https://fapi.binance.com/fapi/v1";
+
+const COINS=[
+  "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT",
+  "LINKUSDT","DOTUSDT","NEARUSDT","LTCUSDT","APTUSDT","ARBUSDT","OPUSDT","SUIUSDT",
+  "INJUSDT","ATOMUSDT","AAVEUSDT","TONUSDT","PEPEUSDT","HBARUSDT","SHIBUSDT","TRXUSDT",
+  "XLMUSDT","ICPUSDT","LDOUSDT","WIFUSDT","BONKUSDT","TRUMPUSDT","JUPUSDT","TIAUSDT",
+  "RENDERUSDT","RUNEUSDT","STXUSDT","FETUSDT","KASUSDT","PENDLEUSDT","MATICUSDT",
+  "FTMUSDT","ALGOUSDT","EGLDUSDT","CRVUSDT","MKRUSDT","COMPUSDT","GALAUSDT",
+];
+
+// ── FETCH ─────────────────────────────────────────────────────────────────────
+function fetchT(url,ms=14000){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
+  return fetch(url,{signal:c.signal}).then(r=>r.ok?r.json():null).catch(()=>null).finally(()=>clearTimeout(t));
+}
+async function pool(urls,n=15){
+  const out=new Array(urls.length).fill(null);let i=0;
+  async function w(){while(i<urls.length){const j=i++;out[j]=await fetchT(urls[j]);}}
+  await Promise.all(Array.from({length:Math.min(n,urls.length)},w));
+  return out;
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function fmt(p){
+  if(p===null||p===undefined) return "—";
+  if(p<0.000001) return p.toExponential(2);
+  if(p<0.0001) return p.toFixed(7);
+  if(p<0.01) return p.toFixed(5);
+  if(p<1) return p.toFixed(4);
+  if(p<100) return p.toFixed(2);
+  if(p<10000) return p.toFixed(1);
+  return Math.round(p).toLocaleString();
+}
+function fmtV(v){return v>=1e9?`$${(v/1e9).toFixed(1)}B`:v>=1e6?`$${(v/1e6).toFixed(0)}M`:`$${(v/1e3).toFixed(0)}K`;}
+function calcEMA(arr,p){
+  if(arr.length<p) return arr[arr.length-1];
+  const k=2/(p+1);let e=arr.slice(0,p).reduce((a,b)=>a+b)/p;
+  for(let i=p;i<arr.length;i++) e=arr[i]*k+e*(1-k);
+  return e;
+}
+
+// ── 1. S/R LEVELS with volume quality + fresh flag ───────────────────────────
+function findSR(highs,lows,closes,quoteVols){
+  const n=highs.length;
+  if(n<20) return {supports:[],resistances:[],nearS:null,nearR:null,distS:null,distR:null,atSupport:false,atResistance:false};
+  const avgVol=quoteVols.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const pH=[],pL=[];
+  for(let i=3;i<n-3;i++){
+    const hh=highs[i]>highs[i-1]&&highs[i]>highs[i-2]&&highs[i]>highs[i-3]&&highs[i]>highs[i+1]&&highs[i]>highs[i+2]&&highs[i]>highs[i+3];
+    const ll=lows[i]<lows[i-1]&&lows[i]<lows[i-2]&&lows[i]<lows[i-3]&&lows[i]<lows[i+1]&&lows[i]<lows[i+2]&&lows[i]<lows[i+3];
+    if(hh) pH.push({price:highs[i],idx:i,vol:quoteVols[i]});
+    if(ll) pL.push({price:lows[i],idx:i,vol:quoteVols[i]});
+  }
+  function cluster(pts){
+    const zones=[],used=new Set();
+    for(let i=0;i<pts.length;i++){
+      if(used.has(i)) continue;
+      const g=[pts[i]];used.add(i);
+      for(let j=i+1;j<pts.length;j++){
+        if(used.has(j)) continue;
+        if(Math.abs(pts[j].price-pts[i].price)/pts[i].price<0.015){g.push(pts[j]);used.add(j);}
+      }
+      const price=g.reduce((a,p)=>a+p.price,0)/g.length;
+      const lastIdx=Math.max(...g.map(p=>p.idx));
+      const maxVol=Math.max(...g.map(p=>p.vol));
+      // fresh = only formed once, price hasn't returned yet
+      const fresh=g.length===1&&(n-1-lastIdx)>3;
+      zones.push({price,touches:g.length,lastIdx,fresh,strongVol:maxVol>avgVol*1.5,volRatio:maxVol/avgVol});
+    }
+    return zones.sort((a,b)=>b.touches-a.touches||b.lastIdx-a.lastIdx);
+  }
+  const price=closes[n-1];
+  const allR=cluster(pH).filter(z=>z.price>price*0.997).sort((a,b)=>a.price-b.price).slice(0,4);
+  const allS=cluster(pL).filter(z=>z.price<price*1.003).sort((a,b)=>b.price-a.price).slice(0,4);
+  const nearR=allR[0]||null,nearS=allS[0]||null;
+  const distR=nearR?((nearR.price-price)/price)*100:null;
+  const distS=nearS?((price-nearS.price)/price)*100:null;
+  return{resistances:allR,supports:allS,nearR,nearS,distR,distS,
+    atSupport:distS!==null&&distS<2.5,
+    atResistance:distR!==null&&distR<2.5};
+}
+
+// ── 2. RELATIVE VOLUME ────────────────────────────────────────────────────────
+function calcRVOL(quoteVols){
+  if(!quoteVols||quoteVols.length<22) return 1;
+  const cur=quoteVols[quoteVols.length-1];
+  const avg=quoteVols.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
+  return avg>0?+(cur/avg).toFixed(2):1;
+}
+
+// ── 3. LIQUIDITY SWEEP DETECTION ─────────────────────────────────────────────
+// Price wicks through an S/R level then closes back inside.
+// This is a stop hunt — the best entries come AFTER a sweep.
+function detectSweeps(highs,lows,closes,opens,sr){
+  const n=closes.length,sweeps=[];
+  if(n<5||(!sr.nearS&&!sr.nearR)) return sweeps;
+  for(let i=Math.max(0,n-4);i<n;i++){
+    if(sr.nearS){
+      const sp=sr.nearS.price;
+      if(lows[i]<sp*0.9985&&closes[i]>sp*0.999&&Math.min(opens[i],closes[i])>sp*0.994){
+        const wd=((sp-lows[i])/sp)*100;
+        if(wd<4) sweeps.push({dir:"bull",idx:i,age:n-1-i,wick:+wd.toFixed(2),level:sp});
+      }
+    }
+    if(sr.nearR){
+      const rp=sr.nearR.price;
+      if(highs[i]>rp*1.0015&&closes[i]<rp*1.001&&Math.max(opens[i],closes[i])<rp*1.006){
+        const wh=((highs[i]-rp)/rp)*100;
+        if(wh<4) sweeps.push({dir:"bear",idx:i,age:n-1-i,wick:+wh.toFixed(2),level:rp});
+      }
+    }
+  }
+  return sweeps;
+}
+
+// ── 4. REVERSAL CANDLES with volume context ───────────────────────────────────
+function detectCandles(opens,highs,lows,closes,quoteVols){
+  const n=closes.length;
+  if(n<5) return [];
+  const avgVol=quoteVols.slice(-21,-1).reduce((a,b)=>a+b,0)/20;
+  const pats=[];
+  for(let i=n-3;i<n;i++){
+    const o=opens[i],h=highs[i],l=lows[i],c=closes[i];
+    const body=Math.abs(c-o),range=h-l;
+    if(range<0.00001) continue;
+    const upper=h-Math.max(o,c),lower=Math.min(o,c)-l,bull=c>o;
+    const pBody=Math.abs(closes[i-1]-opens[i-1]);
+    const vr=avgVol>0?quoteVols[i]/avgVol:1;
+    const vs=vr>1.5;// volume-supported
+
+    if(lower>body*2&&lower>range*0.5&&body>0&&upper<body*0.5)
+      pats.push({name:"Hammer",bull:true,idx:i,strong:lower>body*3||vs,vr});
+    if(upper>body*2&&upper>range*0.5&&body>0&&lower<body*0.5)
+      pats.push({name:"Shooting Star",bull:false,idx:i,strong:upper>body*3||vs,vr});
+    if(body<range*0.1)
+      pats.push({name:"Doji",bull:null,idx:i,strong:false,vr});
+    if(i>0&&bull&&opens[i-1]>closes[i-1]&&c>opens[i-1]&&o<closes[i-1]&&body>pBody*1.1)
+      pats.push({name:"Engulfing",bull:true,idx:i,strong:body>pBody*1.5||vs,vr});
+    if(i>0&&!bull&&closes[i-1]>opens[i-1]&&o>closes[i-1]&&c<opens[i-1]&&body>pBody*1.1)
+      pats.push({name:"Engulfing",bull:false,idx:i,strong:body>pBody*1.5||vs,vr});
+    if(bull&&lower>range*0.6&&body<range*0.25&&!pats.find(p=>p.idx===i&&p.name==="Hammer"))
+      pats.push({name:"Pin Bar",bull:true,idx:i,strong:true,vr});
+    if(!bull&&upper>range*0.6&&body<range*0.25&&!pats.find(p=>p.idx===i&&p.name==="Shooting Star"))
+      pats.push({name:"Pin Bar",bull:false,idx:i,strong:true,vr});
+  }
+  const bi={};pats.forEach(p=>{if(!bi[p.idx]||p.strong)bi[p.idx]=p;});
+  return Object.values(bi);
+}
+
+// ── 5. CHART PATTERNS ─────────────────────────────────────────────────────────
+function detectChartPats(highs,lows,closes){
+  const n=closes.length,pats=[];
+  if(n>=20){
+    const rl=[],rh=[];
+    for(let i=5;i<n-5;i++){
+      if(lows[i]<lows[i-1]&&lows[i]<lows[i-2]&&lows[i]<lows[i+1]&&lows[i]<lows[i+2]) rl.push({p:lows[i],i});
+      if(highs[i]>highs[i-1]&&highs[i]>highs[i-2]&&highs[i]>highs[i+1]&&highs[i]>highs[i+2]) rh.push({p:highs[i],i});
+    }
+    for(let a=0;a<rl.length-1;a++) for(let b=a+1;b<rl.length;b++){
+      const l1=rl[a],l2=rl[b];
+      if(l2.i-l1.i<5||Math.abs(l2.p-l1.p)/l1.p>0.04) continue;
+      const mid=closes.slice(l1.i,l2.i),neck=Math.max(...mid);
+      if(neck<l1.p*1.03) continue;
+      if(closes[n-1]>neck*0.97) pats.push({name:"Double Bottom",bull:true,neckline:neck,target:neck+(neck-Math.min(l1.p,l2.p))});
+    }
+    for(let a=0;a<rh.length-1;a++) for(let b=a+1;b<rh.length;b++){
+      const h1=rh[a],h2=rh[b];
+      if(h2.i-h1.i<5||Math.abs(h2.p-h1.p)/h1.p>0.04) continue;
+      const mid=closes.slice(h1.i,h2.i),neck=Math.min(...mid);
+      if(neck>h1.p*0.97) continue;
+      if(closes[n-1]<neck*1.03) pats.push({name:"Double Top",bull:false,neckline:neck,target:neck-(Math.max(h1.p,h2.p)-neck)});
+    }
+  }
+  if(n>=15){
+    const l=lows.slice(-15),h=highs.slice(-15);
+    let hl=0,lh=0;
+    for(let i=1;i<l.length;i++){if(l[i]>l[i-1])hl++;if(h[i]<h[i-1])lh++;}
+    if(hl>=10) pats.push({name:"Higher Lows",bull:true});
+    if(lh>=10) pats.push({name:"Lower Highs",bull:false});
+  }
+  return pats.slice(0,3);
+}
+
+// ── 6. DAILY CONFLUENCE CHECK ─────────────────────────────────────────────────
+// A 4H S/R that aligns with a daily S/R is an institutional level.
+function checkDailyConf(sr4h,dailyK){
+  if(!dailyK||dailyK.length<20) return {S:false,R:false};
+  const dH=dailyK.map(k=>parseFloat(k[2]));
+  const dL=dailyK.map(k=>parseFloat(k[3]));
+  const dC=dailyK.map(k=>parseFloat(k[4]));
+  const dV=dailyK.map(k=>parseFloat(k[7]));
+  const dSR=findSR(dH,dL,dC,dV);
+  const tol=0.015;
+  const S=!!(sr4h.nearS&&dSR.supports.some(s=>Math.abs(s.price-sr4h.nearS.price)/sr4h.nearS.price<tol));
+  const R=!!(sr4h.nearR&&dSR.resistances.some(r=>Math.abs(r.price-sr4h.nearR.price)/sr4h.nearR.price<tol));
+  return{S,R};
+}
+
+// ── 7. FUNDING SIGNAL ─────────────────────────────────────────────────────────
+function fundingSignal(f){
+  if(f===null||f===undefined) return null;
+  const v=parseFloat(f);
+  if(v<=-0.001) return{label:"FR−−",type:"bull",desc:"Shorts overloaded. Squeeze very likely.",extreme:true};
+  if(v<=-0.0003) return{label:"FR−",type:"bull",desc:"Negative funding — longs being paid.",extreme:false};
+  if(v>=0.001)  return{label:"FR++",type:"bear",desc:"Longs overloaded. Flush very likely.",extreme:true};
+  if(v>=0.0003) return{label:"FR+",type:"bear",desc:"Crowded longs — elevated squeeze risk.",extreme:false};
+  return null;
+}
+
+// ── TREND ─────────────────────────────────────────────────────────────────────
+function getTrend(closes){
+  const n=closes.length;if(n<30) return "NEUTRAL";
+  const e20=calcEMA(closes,20),e50=calcEMA(closes,Math.min(50,n-1)),p=closes[n-1];
+  return p>e20&&e20>e50?"UP":p<e20&&e20<e50?"DOWN":"NEUTRAL";
+}
+
+// ── SCORING ENGINE ────────────────────────────────────────────────────────────
+function score(sr,candles,chartPats,trend,closes,quoteVols,sweeps,rvol,fSig,dConf){
+  let s=0;const sigs=[];
+  const n=closes.length,price=closes[n-1];
+
+  // S/R proximity
+  if(sr.atSupport){
+    let pts=sr.nearS.touches>=3?35:sr.nearS.touches>=2?26:16;
+    if(sr.nearS.fresh){pts+=10;} // first return = highest prob
+    if(sr.nearS.strongVol) pts+=7; // defended with volume
+    if(dConf.S) pts+=12; // also a daily level
+    s+=pts;
+    const tag=`S${sr.nearS.touches}×${sr.nearS.fresh?"★":""}${dConf.S?" [D]":""}`;
+    sigs.push({label:tag,type:"bull",pri:1,desc:sr.nearS.fresh?"First return to untested support — highest probability zone":`Support zone touched ${sr.nearS.touches}× ${dConf.S?"(daily confluence)":""}${sr.nearS.strongVol?" · high-volume level":""}`});
+  }
+  if(sr.atResistance){
+    let pts=sr.nearR.touches>=3?-35:sr.nearR.touches>=2?-26:-16;
+    if(sr.nearR.fresh) pts-=10;
+    if(sr.nearR.strongVol) pts-=7;
+    if(dConf.R) pts-=12;
+    s+=pts;
+    const tag=`R${sr.nearR.touches}×${sr.nearR.fresh?"★":""}${dConf.R?" [D]":""}`;
+    sigs.push({label:tag,type:"bear",pri:1,desc:sr.nearR.fresh?"First return to untested resistance — high rejection probability":`Resistance zone touched ${sr.nearR.touches}× ${dConf.R?"(daily confluence)":""}${sr.nearR.strongVol?" · high-volume level":""}`});
+  }
+
+  // Liquidity sweeps — best entries
+  sweeps.filter(sw=>sw.age<=2).forEach(sw=>{
+    if(sw.dir==="bull"){s+=28;sigs.push({label:"Sweep↑",type:"bull",pri:1,desc:`Stop hunt: ${sw.wick}% wick below support closed back above. Shorts stopped out — long entry.`});}
+    else{s-=28;sigs.push({label:"Sweep↓",type:"bear",pri:1,desc:`Stop hunt: ${sw.wick}% wick above resistance closed back below. Longs stopped out — short entry.`});}
+  });
+
+  // RVOL — amplifies signal or warns
+  if(rvol>=2.0){
+    const boost=s>=0?11:-11;s+=boost;
+    sigs.push({label:`${rvol}×v`,type:s>=0?"bull":"bear",pri:2,desc:`${rvol}× average volume — strong participation confirms move`});
+  } else if(rvol<=0.45&&(sr.atSupport||sr.atResistance)){
+    s+=s>0?-9:9; // thin volume at S/R warns
+    sigs.push({label:`${rvol}×v`,type:"neutral",pri:3,desc:"Thin volume at level — weak signal, higher failure rate"});
+  }
+
+  // Reversal candles
+  candles.filter(c=>c.idx>=n-3).forEach(c=>{
+    const vTag=c.vr>1.5?` ${c.vr.toFixed(1)}×v`:"";
+    if(c.bull===true){
+      s+=c.strong?27:17;
+      sigs.push({label:c.name+vTag,type:"bull",pri:2,desc:`Bullish reversal${c.vr>1.5?" on elevated volume":""}`});
+    } else if(c.bull===false){
+      s-=c.strong?27:17;
+      sigs.push({label:c.name+vTag,type:"bear",pri:2,desc:`Bearish reversal${c.vr>1.5?" on elevated volume":""}`});
+    } else if(sr.atSupport||sr.atResistance){
+      sigs.push({label:"Doji",type:"neutral",pri:3,desc:"Indecision at level — wait for next candle"});
+    }
+  });
+
+  // Chart patterns
+  chartPats.forEach(p=>{
+    if(p.bull===true){s+=18;sigs.push({label:p.name,type:"bull",pri:2,desc:"Bullish chart pattern"});}
+    else if(p.bull===false){s-=18;sigs.push({label:p.name,type:"bear",pri:2,desc:"Bearish chart pattern"});}
+  });
+
+  // Trend alignment
+  if(s>0&&trend==="UP"){s+=7;sigs.push({label:"Uptrend",type:"bull",pri:3,desc:"Signal aligns with the trend"});}
+  if(s<0&&trend==="DOWN"){s-=7;sigs.push({label:"Downtrend",type:"bear",pri:3,desc:"Signal aligns with the trend"});}
+
+  // Funding rate
+  if(fSig){
+    s+=fSig.type==="bull"?(fSig.extreme?15:6):(fSig.extreme?-15:-6);
+    sigs.push({...fSig,pri:2});
+  }
+
+  s=Math.max(-100,Math.min(100,s));
+  const abs=Math.abs(s);
+  const rating=abs>=65?(s>0?"LONG":"SHORT"):abs>=38?(s>0?"WATCH L":"WATCH S"):"NEUTRAL";
+  const color=rating==="LONG"?"#00e676":rating==="SHORT"?"#ff4060":rating==="WATCH L"?"#4dff91":rating==="WATCH S"?"#ff7a8a":"#ffb700";
+
+  // Trade plan
+  let rr=null,stop=null,target=null;
+  const hasBullSweep=sweeps.some(sw=>sw.dir==="bull"&&sw.age<=2);
+  const hasBearSweep=sweeps.some(sw=>sw.dir==="bear"&&sw.age<=2);
+  if(s>0&&sr.nearS&&sr.nearR){
+    stop=sr.nearS.price*(hasBullSweep?0.991:0.995);
+    target=sr.nearR.price;
+    const risk=price-stop,rew=target-price;
+    if(risk>0) rr=(rew/risk).toFixed(1);
+  } else if(s<0&&sr.nearR&&sr.nearS){
+    stop=sr.nearR.price*(hasBearSweep?1.009:1.005);
+    target=sr.nearS.price;
+    const risk=stop-price,rew=price-target;
+    if(risk>0) rr=(rew/risk).toFixed(1);
+  }
+
+  const seen=new Set();
+  const uniq=sigs.filter(s=>{if(seen.has(s.label))return false;seen.add(s.label);return true;})
+    .sort((a,b)=>a.pri-b.pri).slice(0,6);
+
+  return{score:s,rating,color,signals:uniq,rr,stop,target};
+}
+
+// ── BUILD ─────────────────────────────────────────────────────────────────────
+function build(sym,klines,market,funding,dailyK){
+  if(!klines||klines.length<30) return null;
+  const opens=klines.map(k=>parseFloat(k[1]));
+  const highs=klines.map(k=>parseFloat(k[2]));
+  const lows=klines.map(k=>parseFloat(k[3]));
+  const closes=klines.map(k=>parseFloat(k[4]));
+  const qvols=klines.map(k=>parseFloat(k[7]));
+  const n=closes.length;
+  const vol24=qvols.slice(-6).reduce((a,b)=>a+b,0);
+  if(vol24<3e7) return null;
+  const price=closes[n-1];
+  const chg=n>=7?((closes[n-1]-closes[n-7])/closes[n-7])*100:0;
+  const rvol=calcRVOL(qvols);
+  const sr=findSR(highs,lows,closes,qvols);
+  const sweeps=detectSweeps(highs,lows,closes,opens,sr);
+  const candles=detectCandles(opens,highs,lows,closes,qvols);
+  const chartPats=detectChartPats(highs,lows,closes);
+  const trend=getTrend(closes);
+  const dConf=checkDailyConf(sr,dailyK);
+  const fSig=fundingSignal(funding);
+  const setup=score(sr,candles,chartPats,trend,closes,qvols,sweeps,rvol,fSig,dConf);
+  if(setup.signals.length===0) return null;
+  return{id:`${sym}-${market}`,sym,market,price,chg,vol24,rvol,sr,sweeps,candles,chartPats,trend,funding,fSig,dConf,highs,lows,closes,opens,qvols,...setup};
+}
+
+// ── SIM DATA ──────────────────────────────────────────────────────────────────
+function makeSim(coin){
+  const pp=[85000,2100,580,135,2.15,0.175,0.71,22,13.5,4.2,2.6,92,5.2,0.42,0.75,2.1,9.5,4.1,165,3.6,0.0000082,0.175,0.000023,0.084,2.1,4.2,0.95,1.8,0.0000145,9.8,0.52,2.8,4.2,1.8,0.85,0.62,0.082,0.95,0.22,0.28,0.15,18,0.85,1600,45,0.09];
+  const idx=COINS.indexOf(coin),base=pp[idx]||1;
+  const n=100,klines=[];let p=base*0.91;
+  const avgQV=base*45000;
+  for(let j=0;j<n;j++){
+    const tr=j<35?-0.0012:j<52?0.0004:0.0018;
+    p=p*(1+tr+(Math.random()-0.5)*0.022);
+    const o=p,c=p*(1+(Math.random()-0.48)*0.018);
+    const h=Math.max(o,c)*(1+Math.random()*0.007);
+    const l=Math.min(o,c)*(1-Math.random()*0.007);
+    klines.push([j*14400000,o.toFixed(8),h.toFixed(8),l.toFixed(8),c.toFixed(8),
+      '0',j*14400000+14399999,(avgQV*(0.5+Math.random()*0.9)).toFixed(2),'0','0','0','0']);
+  }
+  // Force a sweep+hammer at support on last candle
+  const lc=parseFloat(klines[n-1][4]);
+  klines[n-1][1]=(lc*0.9995).toFixed(8);
+  klines[n-1][2]=(lc*1.005).toFixed(8);
+  klines[n-1][3]=(lc*0.974).toFixed(8);
+  klines[n-1][7]=(avgQV*2.6).toFixed(2);
+  return build(coin.replace("USDT",""),klines,"SPOT",null,null);
+}
+
+// ── MINI CHART ────────────────────────────────────────────────────────────────
+function MiniChart({closes,highs,lows,sr,sweeps=[],W=82,H=34}){
+  if(!closes||closes.length<10) return null;
+  const n=Math.min(closes.length,40);
+  const sl=closes.slice(-n),sh=highs.slice(-n),slo=lows.slice(-n);
+  const mn=Math.min(...slo)*0.9992,mx=Math.max(...sh)*1.0008,rng=mx-mn;
+  if(rng===0) return null;
+  const px=i=>((i/(n-1))*W).toFixed(1);
+  const py=v=>((1-(v-mn)/rng)*H).toFixed(1);
+  const pts=sl.map((c,i)=>`${px(i)},${py(c)}`).join(" ");
+  const up=sl[n-1]>=sl[0];
+  const hasSweep=sweeps.some(s=>s.age<=2);
+  const col=up?"#00e676":"#ff4060";
+  return(
+    <svg width={W} height={H} style={{display:"block",overflow:"visible"}}>
+      {sr.nearS&&parseFloat(py(sr.nearS.price))>=0&&<line x1="0" y1={py(sr.nearS.price)} x2={W} y2={py(sr.nearS.price)} stroke="#00e67638" strokeWidth="1" strokeDasharray="3,2"/>}
+      {sr.nearR&&parseFloat(py(sr.nearR.price))>=0&&<line x1="0" y1={py(sr.nearR.price)} x2={W} y2={py(sr.nearR.price)} stroke="#ff406038" strokeWidth="1" strokeDasharray="3,2"/>}
+      <polyline points={pts} fill="none" stroke={col} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx={px(n-1)} cy={py(sl[n-1])} r={hasSweep?3.5:2} fill={col}/>
+      {hasSweep&&<circle cx={px(n-1)} cy={py(sl[n-1])} r="6.5" fill="none" stroke={col} strokeWidth="1" opacity="0.35"/>}
+    </svg>
+  );
+}
+
+// ── BADGE ─────────────────────────────────────────────────────────────────────
+function Badge({label,type,glow}){
+  const C={
+    bull:{bg:"#002510",b:"#00e676",t:"#00e676"},
+    bear:{bg:"#200008",b:"#ff4060",t:"#ff4060"},
+    neutral:{bg:"#1a1200",b:"#ffb700",t:"#ffb700"},
+    info:{bg:"#080e20",b:"#4da6ff",t:"#4da6ff"},
+  };
+  const c=C[type]||C.neutral;
+  return(
+    <span style={{display:"inline-flex",alignItems:"center",padding:"2px 6px",borderRadius:4,
+      background:c.bg,border:`1px solid ${c.b}`,color:c.t,
+      fontSize:13,fontWeight:700,fontFamily:"var(--mono)",letterSpacing:.4,whiteSpace:"nowrap",
+      boxShadow:glow?`0 0 8px ${c.b}50`:"none"}}>
+      {label}
+    </span>
+  );
+}
+
+// ── TRADINGVIEW ───────────────────────────────────────────────────────────────
+function TVChart({symbol,interval}){
+  const src="https://s.tradingview.com/embed-widget/advanced-chart/1/#"+encodeURIComponent(JSON.stringify({
+    symbol:symbol,interval:interval,timezone:"Etc/UTC",theme:"dark",style:"1",locale:"en",
+    backgroundColor:"rgba(6,9,13,1)",gridColor:"rgba(24,32,48,1)",
+    hide_top_toolbar:false,hide_legend:false,save_image:false,
+    allow_symbol_change:false,calendar:false,
+    support_host:"https://www.tradingview.com"
+  }));
+  return(
+    <div style={{height:330,width:"100%",background:"#06090d"}}>
+      <iframe src={src} style={{width:"100%",height:"100%",border:"none",display:"block"}} allowFullScreen={true} title="chart"/>
+    </div>
+  );
+}
+
+
+// ── DETAIL PANEL ──────────────────────────────────────────────────────────────
+function DetailPanel({op,onClose}){
+  const [iv,setIv]=useState("4H");
+  const tvM={"15M":"15","1H":"60","4H":"240","1D":"D"};
+  const tvSym=op.market==="PERP"?`BINANCE:${op.sym}USDT.P`:`BINANCE:${op.sym}USDT`;
+  const bull=op.score>0;
+  const activeSweeps=(op.sweeps||[]).filter(s=>s.age<=2);
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:100,background:"var(--bg)",display:"flex",flexDirection:"column",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+
+      {/* Header */}
+      <div style={{position:"sticky",top:0,zIndex:10,background:"var(--bg)",padding:"13px 14px 11px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:9}}>
+          <button onClick={onClose} style={{background:"none",border:"1px solid var(--border)",color:"var(--muted)",width:34,height:34,borderRadius:8,fontSize:15,display:"flex",alignItems:"center",justifyContent:"center"}}>←</button>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:7}}>
+              <span style={{fontSize:17,fontWeight:700}}>{op.sym}</span>
+              <Badge label={op.market} type="info"/>
+              {(op.dConf.S||op.dConf.R)&&<Badge label="DAILY" type="info"/>}
+            </div>
+            <div style={{fontSize:13,color:"#90b8d0",marginTop:1,fontFamily:"var(--mono)",display:"flex",gap:8,alignItems:"center"}}>
+              <span>${fmt(op.price)}</span>
+              <span style={{color:op.chg>=0?"var(--green)":"var(--red)"}}>{op.chg>=0?"+":""}{op.chg.toFixed(2)}%</span>
+              <span style={{color:op.rvol>=2?"var(--amber)":op.rvol<=0.5?"#7a9ab0":"#8ab0c8"}}>
+                {op.rvol>=1.5?"⚡":op.rvol<=0.5?"⚠":""}{op.rvol}×v
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"7px 13px",borderRadius:8,background:bull?"#001a0a":"#1a0008",border:`1px solid ${op.color}`,color:op.color,fontSize:12,fontWeight:700,fontFamily:"var(--mono)",letterSpacing:.8}}>{op.rating}</div>
+      </div>
+
+      <div style={{padding:"12px",display:"flex",flexDirection:"column",gap:12}}>
+
+        {/* Sweep alert — top priority */}
+        {activeSweeps.map((sw,i)=>(
+          <div key={i} style={{borderRadius:10,padding:"12px",background:sw.dir==="bull"?"#001a0a":"#1a0008",border:`2px solid ${sw.dir==="bull"?"var(--green)":"var(--red)"}`,display:"flex",gap:10,alignItems:"flex-start"}}>
+            <span style={{fontSize:20,flexShrink:0}}>🎯</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:sw.dir==="bull"?"var(--green)":"var(--red)",marginBottom:3}}>
+                {sw.dir==="bull"?"Bullish Stop Hunt":"Bearish Stop Hunt"} · {sw.age===0?"current bar":sw.age===1?"1 bar ago":"2 bars ago"}
+              </div>
+              <div style={{fontSize:13,color:"#90b8d0",lineHeight:1.7}}>
+                {sw.dir==="bull"
+                  ?`Price swept ${sw.wick}% below support at $${fmt(sw.level)}, then closed back above it. Retail stops cleared — real buyers stepping in.`
+                  :`Price swept ${sw.wick}% above resistance at $${fmt(sw.level)}, then closed back below it. Retail stops cleared — sellers stepping in.`}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Signals */}
+        <div style={{background:"var(--surface)",borderRadius:10,padding:"13px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:11,color:"#8ab0c8",marginBottom:9,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Signals</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+            {op.signals.map((s,i)=><Badge key={i} label={s.label} type={s.type} glow={s.pri===1}/>)}
+          </div>
+          {op.signals.filter(s=>s.desc).map((s,i)=>(
+            <div key={i} style={{display:"flex",gap:6,marginBottom:6,fontSize:13,color:"#b0c8e0",alignItems:"flex-start",lineHeight:1.6}}>
+              <span style={{color:s.type==="bull"?"var(--green)":s.type==="bear"?"var(--red)":"var(--amber)",flexShrink:0,marginTop:1}}>
+                {s.type==="bull"?"▲":s.type==="bear"?"▼":"◆"}
+              </span>
+              <span style={{lineHeight:1.6,color:"#b0c8e0"}}>{s.desc}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Trade plan */}
+        {op.rr&&(
+          <div style={{background:"var(--surface)",borderRadius:10,padding:"13px",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"#8ab0c8",marginBottom:11,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Trade Plan</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:11}}>
+              {[{l:"Entry",v:`$${fmt(op.price)}`,c:"var(--text)"},{l:"Stop",v:`$${fmt(op.stop)}`,c:"var(--red)"},{l:"Target",v:`$${fmt(op.target)}`,c:"var(--green)"}].map((x,i)=>(
+                <div key={i} style={{background:"var(--bg)",borderRadius:8,padding:"9px",textAlign:"center",border:"1px solid var(--border)"}}>
+                  <div style={{fontSize:11,color:"#8ab0c8",marginBottom:3,textTransform:"uppercase",letterSpacing:.5}}>{x.l}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:x.c,fontFamily:"var(--mono)"}}>{x.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+              <span style={{fontSize:13,color:"#8ab0c8",fontWeight:500}}>Risk / Reward</span>
+              <span style={{fontSize:19,fontWeight:700,fontFamily:"var(--mono)",color:parseFloat(op.rr)>=2.5?"var(--green)":parseFloat(op.rr)>=1.5?"var(--amber)":"var(--red)"}}>1 : {op.rr}</span>
+              {parseFloat(op.rr)<1.5&&<span style={{fontSize:12,color:"var(--red)"}}>⚠ Poor R:R</span>}
+            </div>
+          </div>
+        )}
+
+        {/* S/R levels with all quality flags */}
+        <div style={{background:"var(--surface)",borderRadius:10,padding:"13px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:11,color:"#8ab0c8",marginBottom:11,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Support & Resistance</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {op.sr.resistances.slice(0,3).map((r,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 9px",borderRadius:7,background:"#140008",border:"1px solid #240010"}}>
+                <span style={{width:6,height:6,borderRadius:"50%",background:"var(--red)",flexShrink:0}}/>
+                <span style={{fontSize:12,color:"#8ab0c8",width:14}}>R{i+1}</span>
+                <span style={{flex:1,fontSize:12,fontWeight:600,fontFamily:"var(--mono)",color:"#ff7a90"}}>${fmt(r.price)}</span>
+                <div style={{display:"flex",gap:3}}>
+                  {r.fresh&&<span style={{fontSize:8,color:"var(--amber)",fontFamily:"var(--mono)"}}>★FRESH</span>}
+                  {r.strongVol&&<span style={{fontSize:8,color:"var(--green)",fontFamily:"var(--mono)"}}>VOL✓</span>}
+                  {op.dConf.R&&i===0&&<span style={{fontSize:8,color:"var(--blue)",fontFamily:"var(--mono)"}}>DAILY</span>}
+                  <span style={{fontSize:12,color:"#8ab0c8",fontFamily:"var(--mono)"}}>{r.touches}× +{(((r.price-op.price)/op.price)*100).toFixed(1)}%</span>
+                </div>
+              </div>
+            ))}
+            <div style={{textAlign:"center",padding:"3px",fontSize:13,color:"#8ab0c8",fontFamily:"var(--mono)",letterSpacing:.5}}>── ${fmt(op.price)} ──</div>
+            {op.sr.supports.slice(0,3).map((s,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 9px",borderRadius:7,background:"#001408",border:"1px solid #002414"}}>
+                <span style={{width:6,height:6,borderRadius:"50%",background:"var(--green)",flexShrink:0}}/>
+                <span style={{fontSize:12,color:"#8ab0c8",width:14}}>S{i+1}</span>
+                <span style={{flex:1,fontSize:12,fontWeight:600,fontFamily:"var(--mono)",color:"#4dff91"}}>${fmt(s.price)}</span>
+                <div style={{display:"flex",gap:3}}>
+                  {s.fresh&&<span style={{fontSize:8,color:"var(--amber)",fontFamily:"var(--mono)"}}>★FRESH</span>}
+                  {s.strongVol&&<span style={{fontSize:8,color:"var(--green)",fontFamily:"var(--mono)"}}>VOL✓</span>}
+                  {op.dConf.S&&i===0&&<span style={{fontSize:8,color:"var(--blue)",fontFamily:"var(--mono)"}}>DAILY</span>}
+                  <span style={{fontSize:12,color:"#8ab0c8",fontFamily:"var(--mono)"}}>{s.touches}× -{(((op.price-s.price)/op.price)*100).toFixed(1)}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Volume + Funding row */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{background:"var(--surface)",borderRadius:10,padding:"12px",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"#8ab0c8",marginBottom:7,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Rel. Volume</div>
+            <div style={{fontSize:20,fontWeight:700,fontFamily:"var(--mono)",color:op.rvol>=2?"var(--amber)":op.rvol<=0.5?"var(--muted)":"var(--text)"}}>{op.rvol}×</div>
+            <div style={{fontSize:12,color:"#8ab0c8",marginTop:2}}>vs 20-bar avg</div>
+            <div style={{fontSize:12,color:"#8ab0c8",marginTop:3}}>{fmtV(op.vol24)} 24h</div>
+            {op.rvol>=2&&<div style={{fontSize:13,color:"var(--amber)",marginTop:5}}>⚡ Strong participation</div>}
+            {op.rvol<=0.5&&<div style={{fontSize:13,color:"var(--red)",marginTop:5}}>⚠ Thin — weak signal</div>}
+          </div>
+          <div style={{background:"var(--surface)",borderRadius:10,padding:"12px",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"#8ab0c8",marginBottom:7,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Funding Rate</div>
+            {op.funding!==null&&op.funding!==undefined?(
+              <>
+                <div style={{fontSize:18,fontWeight:700,fontFamily:"var(--mono)",color:op.funding<-0.0003?"var(--green)":op.funding>0.0003?"var(--red)":"var(--text)"}}>
+                  {(parseFloat(op.funding)*100).toFixed(4)}%
+                </div>
+                <div style={{fontSize:12,color:"#8ab0c8",marginTop:2}}>per 8h</div>
+                {op.fSig?<div style={{fontSize:13,color:op.fSig.type==="bull"?"var(--green)":"var(--red)",marginTop:5,lineHeight:1.4}}>{op.fSig.desc}</div>
+                  :<div style={{fontSize:12,color:"#8ab0c8",marginTop:5}}>Balanced — no edge</div>}
+              </>
+            ):<div style={{fontSize:12,color:"#8ab0c8"}}>SPOT</div>}
+          </div>
+        </div>
+
+        {/* Candle patterns */}
+        {op.candles.length>0&&(
+          <div style={{background:"var(--surface)",borderRadius:10,padding:"13px",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"#8ab0c8",marginBottom:9,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Candle Patterns · 4H</div>
+            {op.candles.slice(0,4).map((c,i)=>{
+              const age=op.closes.length-1-c.idx;
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7}}>
+                    <span style={{fontSize:14}}>{c.bull===true?"🟢":c.bull===false?"🔴":"🟡"}</span>
+                    <div>
+                      <span style={{fontSize:13,fontWeight:600}}>{c.name}{c.strong?" ★":""}</span>
+                      {c.vr>1.5&&<span style={{fontSize:13,color:"var(--amber)",marginLeft:5,fontFamily:"var(--mono)"}}>{c.vr.toFixed(1)}×v</span>}
+                      <div style={{fontSize:13,color:"var(--muted)"}}>{age===0?"current bar":age===1?"1 bar ago":`${age} bars ago`}</div>
+                    </div>
+                  </div>
+                  <Badge label={c.bull===true?"Bullish":c.bull===false?"Bearish":"Neutral"} type={c.bull===true?"bull":c.bull===false?"bear":"neutral"}/>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Chart patterns */}
+        {op.chartPats.length>0&&(
+          <div style={{background:"var(--surface)",borderRadius:10,padding:"13px",border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"#8ab0c8",marginBottom:9,textTransform:"uppercase",letterSpacing:1.2,fontWeight:600}}>Chart Patterns</div>
+            {op.chartPats.map((p,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+                  {p.target&&<div style={{fontSize:12,color:"#8ab0c8"}}>Target ${fmt(p.target)}</div>}
+                </div>
+                <Badge label={p.bull===true?"Bullish":p.bull===false?"Bearish":"Structure"} type={p.bull===true?"bull":p.bull===false?"bear":"neutral"}/>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* TradingView */}
+        <div style={{background:"var(--surface)",borderRadius:10,overflow:"hidden",border:"1px solid var(--border)"}}>
+          <div style={{padding:"9px 12px",display:"flex",gap:4,borderBottom:"1px solid var(--border)"}}>
+            {["15M","1H","4H","1D"].map(i=>(
+              <button key={i} onClick={()=>setIv(i)} style={{padding:"4px 11px",borderRadius:5,fontSize:12,fontWeight:700,fontFamily:"var(--mono)",background:iv===i?"var(--border2)":"transparent",border:`1px solid ${iv===i?"var(--border2)":"var(--border)"}`,color:iv===i?"var(--text)":"var(--muted)"}}>
+                {i}
+              </button>
+            ))}
+          </div>
+          <TVChart symbol={tvSym} interval={tvM[iv]}/>
+        </div>
+        <div style={{height:12}}/>
+      </div>
+    </div>
+  );
+}
+
+// ── ROW ───────────────────────────────────────────────────────────────────────
+function Row({op,onClick}){
+  const hasSweep=op.sweeps&&op.sweeps.some(s=>s.age<=2);
+  const hasDaily=op.dConf&&(op.dConf.S||op.dConf.R);
+  return(
+    <div onClick={onClick} className="fu" style={{display:"flex",alignItems:"center",padding:"10px 13px",borderBottom:"1px solid var(--border)",cursor:"pointer",gap:9,background:hasSweep?"#080f08":"transparent",position:"relative"}}
+      onTouchStart={e=>e.currentTarget.style.background=hasSweep?"#0c150c":"#0c1018"}
+      onTouchEnd={e=>e.currentTarget.style.background=hasSweep?"#080f08":"transparent"}>
+      {hasSweep&&<div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:"var(--green)",borderRadius:"0 2px 2px 0"}}/>}
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
+          <span style={{fontSize:13,fontWeight:700}}>{op.sym}</span>
+          <span style={{fontSize:8,color:"var(--muted)",fontFamily:"var(--mono)",background:"var(--surface2)",border:"1px solid var(--border)",padding:"1px 4px",borderRadius:3}}>{op.market}</span>
+          {op.trend!=="NEUTRAL"&&<span style={{fontSize:12,color:op.trend==="UP"?"var(--green)":"var(--red)"}}>{op.trend==="UP"?"↑":"↓"}</span>}
+          {hasDaily&&<span style={{fontSize:8,color:"var(--blue)",fontFamily:"var(--mono)"}}>D</span>}
+          {op.rvol>=2&&<span style={{fontSize:8,color:"var(--amber)",fontFamily:"var(--mono)"}}>⚡{op.rvol}×</span>}
+          {hasSweep&&<span style={{fontSize:8,color:"var(--green)",fontFamily:"var(--mono)"}}>SWEEP</span>}
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+          {op.signals.slice(0,3).map((s,i)=><Badge key={i} label={s.label} type={s.type} glow={s.pri===1&&i===0}/>)}
+        </div>
+      </div>
+      <div style={{flexShrink:0}}>
+        <MiniChart closes={op.closes} highs={op.highs} lows={op.lows} sr={op.sr} sweeps={op.sweeps}/>
+        <div style={{textAlign:"center",marginTop:2,fontSize:13,fontFamily:"var(--mono)",color:op.chg>=0?"var(--green)":"var(--red)"}}>
+          {op.chg>=0?"+":""}{op.chg.toFixed(1)}%
+        </div>
+      </div>
+      <div style={{flexShrink:0,textAlign:"right",minWidth:58}}>
+        <div style={{fontSize:12,fontWeight:700,fontFamily:"var(--mono)",color:op.color,letterSpacing:.5,marginBottom:3}}>{op.rating}</div>
+        {op.rr&&<div style={{fontSize:13,fontFamily:"var(--mono)",color:parseFloat(op.rr)>=2.5?"var(--green)":parseFloat(op.rr)>=1.5?"var(--amber)":"var(--muted)"}}>R:R {op.rr}</div>}
+        <div style={{fontSize:12,color:"#8ab0c8",marginTop:2,fontFamily:"var(--mono)"}}>${fmt(op.price)}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────────────────────
+function App(){
+  const [ops,setOps]=useState([]);
+  const [scanning,setScanning]=useState(false);
+  const [pct,setPct]=useState(0);
+  const [sel,setSel]=useState(null);
+  const [filt,setFilt]=useState("ALL");
+  const [mkt,setMkt]=useState("ALL");
+  const [mode,setMode]=useState("sim");
+  const [scanned,setScanned]=useState(null);
+  const [err,setErr]=useState("");
+  const [q,setQ]=useState("");
+
+  const scan=useCallback(async()=>{
+    setScanning(true);setPct(0);setErr("");
+    let result=[],live=false;
+    try{
+      setPct(7);
+      const [s4h,p4h,s1d,fr]=await Promise.all([
+        pool(COINS.map(c=>`${BASE}/klines?symbol=${c}&interval=4h&limit=100`),15),
+        pool(COINS.map(c=>`${FBASE}/klines?symbol=${c}&interval=4h&limit=100`),15),
+        pool(COINS.map(c=>`${BASE}/klines?symbol=${c}&interval=1d&limit=60`),10),
+        fetchT(`${FBASE}/premiumIndex`),
+      ]);
+      setPct(78);
+      const fm={};
+      if(fr&&Array.isArray(fr)) fr.forEach(x=>{fm[x.symbol]=parseFloat(x.lastFundingRate);});
+      const out=[];
+      COINS.forEach((c,i)=>{
+        const base=c.replace("USDT","");
+        if(s4h[i]){const op=build(base,s4h[i],"SPOT",null,s1d[i]);if(op)out.push(op);}
+        if(p4h[i]){const op=build(base,p4h[i],"PERP",fm[c]??null,s1d[i]);if(op)out.push(op);}
+      });
+      if(out.length>0){result=out;live=true;}
+    }catch(e){}
+    setPct(92);
+    if(!live){
+      result=COINS.map(makeSim).filter(Boolean);
+      setErr("Live data unavailable — simulated data");
+    }
+    // Sort: sweeps first (recency matters), then by score magnitude
+    result.sort((a,b)=>{
+      const as=(a.sweeps||[]).some(s=>s.age<=2)?1:0;
+      const bs=(b.sweeps||[]).some(s=>s.age<=2)?1:0;
+      if(bs!==as) return bs-as;
+      // daily confluence tier above regular
+      const ad=(a.dConf.S||a.dConf.R)?1:0;
+      const bd=(b.dConf.S||b.dConf.R)?1:0;
+      if(bd!==ad) return bd-ad;
+      return Math.abs(b.score)-Math.abs(a.score);
+    });
+    setPct(100);setOps(result);setMode(live?"live":"sim");setScanned(new Date());setScanning(false);
+  },[]);
+
+  useEffect(()=>{scan();},[]);
+
+  const filtered=useMemo(()=>ops.filter(op=>{
+    if(q&&!op.sym.toLowerCase().includes(q.toLowerCase())) return false;
+    if(mkt!=="ALL"&&op.market!==mkt) return false;
+    if(filt==="LONG"&&op.score<=0) return false;
+    if(filt==="SHORT"&&op.score>=0) return false;
+    if(filt==="SWEEP"&&!(op.sweeps&&op.sweeps.some(s=>s.age<=2))) return false;
+    if(filt==="WATCH"&&!(op.rating==="WATCH L"||op.rating==="WATCH S")) return false;
+    return true;
+  }),[ops,filt,mkt,q]);
+
+  const cnt={
+    L:ops.filter(o=>o.score>38).length,
+    S:ops.filter(o=>o.score<-38).length,
+    SW:ops.filter(o=>o.sweeps&&o.sweeps.some(s=>s.age<=2)).length,
+    W:ops.filter(o=>Math.abs(o.score)<=38&&Math.abs(o.score)>0).length,
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%",maxHeight:"100dvh"}}>
+      {/* ── Header ── */}
+      <div style={{padding:"11px 13px 0",borderBottom:"1px solid var(--border)",background:"var(--bg)",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:9}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:700,letterSpacing:1.5,color:"var(--text)"}}>SR SCANNER</div>
+            <div style={{fontSize:12,color:"#8ab0c8",fontFamily:"var(--mono)",marginTop:1,display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:mode==="live"?"var(--green)":"var(--amber)",display:"inline-block",animation:mode==="live"?"pulse 2s infinite":""}}/>
+              {mode==="live"?"LIVE":"SIM"}
+              {scanned&&<span>· {scanned.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
+              {err&&<span style={{color:"var(--amber)"}}> · {err}</span>}
+            </div>
+          </div>
+          <button onClick={scan} disabled={scanning} style={{background:scanning?"var(--surface)":"var(--gdim)",border:`1px solid ${scanning?"var(--border)":"var(--green)"}`,color:scanning?"var(--muted)":"var(--green)",borderRadius:7,padding:"7px 13px",fontSize:13,fontWeight:700,fontFamily:"var(--mono)",display:"flex",alignItems:"center",gap:5}}>
+            {scanning?<span style={{width:10,height:10,border:"2px solid var(--border)",borderTopColor:"var(--muted)",borderRadius:"50%",animation:"spin 1s linear infinite",display:"inline-block"}}/>:"↻"}
+            {scanning?`${pct}%`:"SCAN"}
+          </button>
+        </div>
+        {scanning&&<div style={{height:2,background:"var(--border)",borderRadius:1,marginBottom:7,overflow:"hidden"}}><div style={{height:"100%",background:"var(--green)",width:`${pct}%`,transition:"width .3s",borderRadius:1}}/></div>}
+        {ops.length>0&&!scanning&&(
+          <div style={{display:"flex",gap:10,marginBottom:7,fontSize:13,fontFamily:"var(--mono)"}}>
+            <span style={{color:"var(--green)"}}>▲ {cnt.L}</span>
+            <span style={{color:"var(--red)"}}>▼ {cnt.S}</span>
+            {cnt.SW>0&&<span style={{color:"var(--green)"}}>🎯 {cnt.SW} sweep{cnt.SW>1?"s":""}</span>}
+            <span style={{color:"var(--amber)"}}>◆ {cnt.W} watch</span>
+            <span style={{color:"#8ab0c8",marginLeft:"auto"}}>{ops.length} pairs</span>
+          </div>
+        )}
+        {/* Filter tabs */}
+        <div style={{display:"flex",gap:4,marginBottom:7,overflowX:"auto",paddingBottom:1}}>
+          {[{k:"ALL",l:"All",c:null},{k:"LONG",l:`▲ ${cnt.L}`,c:"var(--green)"},{k:"SHORT",l:`▼ ${cnt.S}`,c:"var(--red)"},{k:"SWEEP",l:`🎯 ${cnt.SW}`,c:"var(--green)"},{k:"WATCH",l:"Watch",c:"var(--amber)"}].map(({k,l,c})=>(
+            <button key={k} onClick={()=>setFilt(k)} style={{padding:"4px 9px",borderRadius:5,fontSize:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0,background:filt===k?"var(--surface2)":"transparent",border:`1px solid ${filt===k?(c||"var(--border2)"):"var(--border)"}`,color:filt===k?(c||"var(--text)"):"var(--muted)"}}>
+              {l}
+            </button>
+          ))}
+          <div style={{width:1,background:"var(--border)",flexShrink:0,margin:"0 2px"}}/>
+          {["ALL","SPOT","PERP"].map(m=>(
+            <button key={m} onClick={()=>setMkt(m)} style={{padding:"4px 8px",borderRadius:5,fontSize:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0,background:mkt===m?"var(--surface2)":"transparent",border:`1px solid ${mkt===m?"var(--border2)":"var(--border)"}`,color:mkt===m?"var(--text)":"var(--muted)"}}>
+              {m}
+            </button>
+          ))}
+        </div>
+        {/* Search */}
+        <div style={{marginBottom:9,position:"relative"}}>
+          <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:"var(--muted)",fontSize:12,pointerEvents:"none"}}>⌕</span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search coin..."/>
+          {q&&<button onClick={()=>setQ("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"var(--muted)",fontSize:12}}>✕</button>}
+        </div>
+      </div>
+
+      {/* ── List ── */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+        {scanning&&ops.length===0&&(
+          <div style={{padding:"50px 20px",textAlign:"center"}}>
+            <div style={{fontSize:13,color:"#90b8d0",fontFamily:"var(--mono)",marginBottom:14}}>Scanning {COINS.length} pairs + daily levels…</div>
+            <div style={{height:2,background:"var(--border)",borderRadius:1,overflow:"hidden",maxWidth:160,margin:"0 auto"}}><div style={{height:"100%",background:"var(--green)",width:`${pct}%`,transition:"width .3s"}}/></div>
+          </div>
+        )}
+        {!scanning&&filtered.length===0&&(
+          <div style={{padding:"60px 20px",textAlign:"center",color:"#90b8d0",fontSize:13}}>
+            {ops.length===0?"Tap SCAN to start":"No coins match filter"}
+          </div>
+        )}
+        {filtered.map(op=><Row key={op.id} op={op} onClick={()=>setSel(op)}/>)}
+        {filtered.length>0&&<div style={{padding:"12px",textAlign:"center",fontSize:12,color:"#8ab0c8",fontFamily:"var(--mono)"}}>{filtered.length} results · tap for details</div>}
+      </div>
+
+      {sel&&<DetailPanel op={sel} onClose={()=>setSel(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
